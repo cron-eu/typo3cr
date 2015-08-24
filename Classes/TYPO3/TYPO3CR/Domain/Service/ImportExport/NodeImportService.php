@@ -176,6 +176,7 @@ class NodeImportService {
 	 * @return void
 	 */
 	public function import(\XMLReader $xmlReader, $targetPath, $resourceLoadPath = NULL) {
+		$this->persistenceManager->persistAll();
 		$this->propertyMappingConfiguration = new ImportExportPropertyMappingConfiguration($resourceLoadPath);
 		$this->nodeNameStack = ($targetPath === '/') ? array() : array_map(function($pathSegment) {
 			return Utility::renderValidNodeName($pathSegment);
