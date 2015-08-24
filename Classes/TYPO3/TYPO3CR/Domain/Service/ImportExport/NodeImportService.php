@@ -35,6 +35,7 @@ use TYPO3\TYPO3CR\Utility;
 class NodeImportService {
 
 	const SUPPORTED_FORMAT_VERSION = '2.0';
+	const PROPERTY_MAPPER_BATCH_SIZE = 100;
 
 	/**
 	 * @Flow\Inject
@@ -475,11 +476,13 @@ class NodeImportService {
 	 * @throws ImportException
 	 */
 	protected function convertElementToValue(\XMLReader $reader, $currentType, $currentEncoding, $currentClassName, $currentIdentifier = '') {
+		static $propertyMapperCallCount = 0;
 		switch ($currentType) {
 			case 'object':
 				if ($currentClassName === 'DateTime') {
 					$value = $this->propertyMapper->convert($reader->value, $currentClassName, $this->propertyMappingConfiguration);
 				} elseif ($currentEncoding === 'json') {
+					if (++$propertyMapperCallCount % self::PROPERTY_MAPPER_BATCH_SIZE === 0) $this->persistenceManager->clearState();
 					try {
 						$value = $this->propertyMapper->convert(json_decode($reader->value, TRUE), $currentClassName, $this->propertyMappingConfiguration);
 					} catch (\TYPO3\Flow\Property\Exception $e) {
