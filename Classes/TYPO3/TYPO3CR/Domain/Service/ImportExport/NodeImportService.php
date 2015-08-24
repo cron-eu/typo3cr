@@ -29,6 +29,7 @@ use TYPO3\TYPO3CR\Utility;
  * Internally, uses associative arrays instead of Domain Models for performance reasons, so "nodeData" in this
  * class is always an associative array.
  *
+ * @property array importSoftErrors
  * @Flow\Scope("singleton")
  */
 class NodeImportService {
@@ -231,12 +232,22 @@ class NodeImportService {
 			switch ($xmlReader->nodeType) {
 				case \XMLReader::ELEMENT:
 					if (!$xmlReader->isEmptyElement) {
+						$this->importSoftErrors = [];
 						$this->parseElement($xmlReader);
 					}
 					break;
 				case \XMLReader::END_ELEMENT:
 					if ((string)$xmlReader->name === 'nodes') {
 						return; // all done, reached the closing </nodes> tag
+					}
+					if ($this->importSoftErrors) {
+						$nodeName = array_slice($this->nodeNameStack, -1)[0];
+						$nodePath = array_slice($this->nodeDataStack, -1)[0]['path'];
+						echo sprintf('Soft errors while importing node %s (%s): %s',
+							$nodeName,
+						    $nodePath,
+							implode(';', $this->importSoftErrors)
+						) . PHP_EOL;
 					}
 					$this->parseEndElement($xmlReader);
 					break;
@@ -392,6 +403,7 @@ class NodeImportService {
 	 *
 	 * @param \XMLReader $reader reader positioned just after an opening properties-tag
 	 * @return array the properties
+	 * @throws ImportException
 	 */
 	protected function parsePropertiesElement(\XMLReader $reader) {
 		$properties = array();
@@ -402,7 +414,8 @@ class NodeImportService {
 		$currentIdentifier = NULL;
 
 		while ($reader->read()) {
-			switch ($reader->nodeType) {
+			try {
+				switch ($reader->nodeType) {
 				case \XMLReader::ELEMENT:
 					$currentProperty = $reader->name;
 					$currentType = $reader->getAttribute('__type');
@@ -412,14 +425,14 @@ class NodeImportService {
 
 					if ($reader->isEmptyElement) {
 						switch ($currentType) {
-							case 'array':
-								$properties[$currentProperty] = array();
-								break;
-							case 'string':
-								$properties[$currentProperty] = '';
-								break;
-							default:
-								$properties[$currentProperty] = NULL;
+						case 'array':
+							$properties[$currentProperty] = array();
+							break;
+						case 'string':
+							$properties[$currentProperty] = '';
+							break;
+						default:
+							$properties[$currentProperty] = NULL;
 						}
 						$currentType = NULL;
 					}
@@ -439,6 +452,11 @@ class NodeImportService {
 				case \XMLReader::TEXT:
 					$properties[$currentProperty] = $this->convertElementToValue($reader, $currentType, $currentEncoding, $currentClassName, $currentIdentifier);
 					break;
+				}
+			} catch (ImportException $e) {
+				if ($e->getCode() == $e::soft) {
+					$this->importSoftErrors[] = sprintf('Cannot map property %s', $currentProperty);
+				} else throw $e;
 			}
 		}
 
@@ -462,7 +480,11 @@ class NodeImportService {
 				if ($currentClassName === 'DateTime') {
 					$value = $this->propertyMapper->convert($reader->value, $currentClassName, $this->propertyMappingConfiguration);
 				} elseif ($currentEncoding === 'json') {
-					$value = $this->propertyMapper->convert(json_decode($reader->value, TRUE), $currentClassName, $this->propertyMappingConfiguration);
+					try {
+						$value = $this->propertyMapper->convert(json_decode($reader->value, TRUE), $currentClassName, $this->propertyMappingConfiguration);
+					} catch (\TYPO3\Flow\Property\Exception $e) {
+						throw new ImportException($e->getMessage(), ImportException::soft);
+					}
 				} else {
 					throw new ImportException(sprintf('Unsupported encoding "%s"', $currentEncoding), 1404397061);
 				}
